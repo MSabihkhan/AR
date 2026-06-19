@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Menuva AR — Burger</title>
+
+  <!-- A-Frame -->
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <!-- AR.js (marker-based build — most stable, no SLAM drift) -->
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #000;
+      overflow: hidden;
+    }
+
+    /* ── OVERLAY UI ── */
+    #ui {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 1.25rem;
+    }
+
+    /* Top bar */
+    #topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.01em;
+    }
+    .logo span { color: #D4843A; }
+
+    .item-label {
+      background: rgba(0,0,0,0.55);
+      border: 1px solid rgba(212,132,58,0.4);
+      border-radius: 100px;
+      padding: 0.35rem 0.9rem;
+      color: #D4843A;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* Status pill */
+    #status {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.7);
+      border: 1px solid rgba(212,132,58,0.35);
+      border-radius: 16px;
+      padding: 1.1rem 1.75rem;
+      text-align: center;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    #status.hidden { opacity: 0; }
+
+    .status-icon {
+      font-size: 2rem;
+      margin-bottom: 0.4rem;
+    }
+
+    .status-title {
+      color: #fff;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 0.2rem;
+    }
+
+    .status-sub {
+      color: rgba(255,255,255,0.5);
+      font-size: 0.72rem;
+    }
+
+    /* Bottom info card — shown when marker is found */
+    #dish-card {
+      background: rgba(0,0,0,0.72);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 20px;
+      padding: 1rem 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+
+    #dish-card.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .dish-info h3 {
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    .dish-info p {
+      color: rgba(255,255,255,0.5);
+      font-size: 0.72rem;
+      margin-top: 0.15rem;
+    }
+
+    .dish-price {
+      color: #D4843A;
+      font-size: 1.3rem;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    /* Scanning reticle (shown while searching) */
+    #reticle {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 180px;
+      height: 180px;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    #reticle.hidden { opacity: 0; }
+
+    #reticle::before,
+    #reticle::after {
+      content: '';
+      position: absolute;
+      width: 32px;
+      height: 32px;
+      border-color: #D4843A;
+      border-style: solid;
+    }
+    #reticle::before {
+      top: 0; left: 0;
+      border-width: 3px 0 0 3px;
+      border-radius: 4px 0 0 0;
+    }
+    #reticle::after {
+      bottom: 0; right: 0;
+      border-width: 0 3px 3px 0;
+      border-radius: 0 0 4px 0;
+    }
+    .reticle-tr, .reticle-bl {
+      position: absolute;
+      width: 32px;
+      height: 32px;
+      border-color: #D4843A;
+      border-style: solid;
+    }
+    .reticle-tr {
+      top: 0; right: 0;
+      border-width: 3px 3px 0 0;
+      border-radius: 0 4px 0 0;
+    }
+    .reticle-bl {
+      bottom: 0; left: 0;
+      border-width: 0 0 3px 3px;
+      border-radius: 0 0 0 4px;
+    }
+
+    /* Pulse animation on reticle */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+      50%       { opacity: 0.5; transform: translate(-50%, -50%) scale(1.08); }
+    }
+    #reticle { animation: pulse 2s ease-in-out infinite; }
+    #reticle.hidden { animation: none; }
+
+    /* AR.js debug UI — always hide */
+    .a-enter-vr, .a-enter-ar { display: none !important; }
+  </style>
+</head>
+<body>
+
+<!-- ── AR SCENE ── -->
+<a-scene
+  embedded
+  arjs="sourceType: webcam;
+        debugUIEnabled: false;
+        detectionMode: mono_and_matrix;
+        matrixCodeType: 3x3;"
+  renderer="logarithmicDepthBuffer: true; antialias: true; alpha: true;"
+  vr-mode-ui="enabled: false"
+  loading-screen="enabled: false"
+>
+
+  <a-assets>
+    <a-asset-item id="burger-glb" src="burger.glb"></a-asset-item>
+  </a-assets>
+
+  <!--
+    HIRO MARKER — print from:
+    https://raw.githack.com/AR-js-org/AR.js/master/data/images/hiro.png
+
+    smooth="true" + smoothCount/Tolerance = eliminates jitter
+    The model locks to the physical marker — zero drift
+  -->
+  <a-marker
+    preset="hiro"
+    smooth="true"
+    smoothCount="10"
+    smoothTolerance="0.01"
+    smoothThreshold="5"
+    id="ar-marker"
+  >
+    <a-entity
+      id="dish-model"
+      gltf-model="#burger-glb"
+      position="0 0 0"
+      rotation="-90 0 0"
+      scale="0.08 0.08 0.08"
+      animation="property: rotation;
+                 from: -90 0 0;
+                 to: -90 360 0;
+                 loop: true;
+                 dur: 10000;
+                 easing: linear"
+    ></a-entity>
+  </a-marker>
+
+  <a-entity camera></a-entity>
+</a-scene>
+
+
+<!-- ── OVERLAY UI ── -->
+<div id="ui">
+  <div id="topbar">
+    <div class="logo">menu<span>va</span></div>
+    <div class="item-label">AR Preview</div>
+  </div>
+
+  <div id="dish-card">
+    <div class="dish-info">
+      <h3>Classic Smash Burger</h3>
+      <p>Double patty · Cheddar · Pickles · Special sauce</p>
+    </div>
+    <div class="dish-price">PKR 1,450</div>
+  </div>
+</div>
+
+<!-- Scanning reticle -->
+<div id="reticle">
+  <div class="reticle-tr"></div>
+  <div class="reticle-bl"></div>
+</div>
+
+<!-- Status message -->
+<div id="status">
+  <div class="status-icon">🔍</div>
+  <div class="status-title">Point at the table card</div>
+  <div class="status-sub">Keep the Hiro marker in frame</div>
+</div>
+
+
+<script>
+  const marker    = document.getElementById('ar-marker');
+  const status    = document.getElementById('status');
+  const reticle   = document.getElementById('reticle');
+  const dishCard  = document.getElementById('dish-card');
+
+  marker.addEventListener('markerFound', () => {
+    status.classList.add('hidden');
+    reticle.classList.add('hidden');
+    dishCard.classList.add('visible');
+  });
+
+  marker.addEventListener('markerLost', () => {
+    status.classList.remove('hidden');
+    reticle.classList.remove('hidden');
+    dishCard.classList.remove('visible');
+  });
+</script>
+
+</body>
+</html>
