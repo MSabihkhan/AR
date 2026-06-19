@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
   <title>Menuva AR — Burger</title>
 
-  <!-- A-Frame -->
-  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-  <!-- AR.js (marker-based build — most stable, no SLAM drift) -->
-  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+  <!-- A-Frame 1.6.0 — MUST match the AR.js version below (AR.js 3.4.7 requires A-Frame 1.6.0) -->
+  <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
+  <!-- AR.js 3.4.7 (marker-based build — model locks to the physical marker, no SLAM drift).
+       Pinned to a release tag and served from jsDelivr's CDN — never load from `master`. -->
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.7/aframe/build/aframe-ar.js"></script>
 
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -201,8 +202,8 @@
   embedded
   arjs="sourceType: webcam;
         debugUIEnabled: false;
-        detectionMode: mono_and_matrix;
-        matrixCodeType: 3x3;"
+        detectionMode: mono;
+        maxDetectionRate: 60;"
   renderer="logarithmicDepthBuffer: true; antialias: true; alpha: true;"
   vr-mode-ui="enabled: false"
   loading-screen="enabled: false"
@@ -213,11 +214,11 @@
   </a-assets>
 
   <!--
-    HIRO MARKER — print from:
-    https://raw.githack.com/AR-js-org/AR.js/master/data/images/hiro.png
+    HIRO MARKER — print or display on a second screen from:
+    https://raw.githack.com/AR-js-org/AR.js/3.4.7/data/images/hiro.png
 
-    smooth="true" + smoothCount/Tolerance = eliminates jitter
-    The model locks to the physical marker — zero drift
+    smooth="true" + smoothCount/Tolerance damps tracking jitter.
+    The model locks to the physical marker — zero SLAM drift.
   -->
   <a-marker
     preset="hiro"
@@ -227,19 +228,35 @@
     smoothThreshold="5"
     id="ar-marker"
   >
+    <!--
+      SPINNER PIVOT — sits at the marker centre and rotates about the
+      vertical (Y) axis. The model is offset *inside* it so the dish's
+      geometric centre lands on this Y axis → it spins in place, no wobble.
+    -->
     <a-entity
-      id="dish-model"
-      gltf-model="#burger-glb"
-      position="0 0.5 0"
-      rotation="-90 0 0"
-      scale="0.5 0.5 0.5"
+      id="dish-spinner"
       animation="property: rotation;
-                 from: -90 0 0;
-                 to: -90 360 0;
+                 from: 0 0 0;
+                 to: 0 360 0;
                  loop: true;
-                 dur: 10000;
+                 dur: 8000;
                  easing: linear"
-    ></a-entity>
+    >
+      <!--
+        burger.glb is glTF Y-up (0.31 × 0.10 × 0.22 m) so it already stands
+        upright — NO -90° tilt. Transform derived from its real bounding box:
+          scale 4      → ~1.25× the marker's width (clearly visible, plate-like)
+          position.y   = -(scale × bbox.minY)   → bottom rests ON the marker
+          position.x/z = -(scale × bbox.centerXZ) → centred on the spin axis
+      -->
+      <a-entity
+        id="dish-model"
+        gltf-model="#burger-glb"
+        position="0.019 -0.076 0.113"
+        rotation="0 0 0"
+        scale="4 4 4"
+      ></a-entity>
+    </a-entity>
   </a-marker>
 
   <a-entity camera></a-entity>
