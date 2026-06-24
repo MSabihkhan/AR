@@ -124,7 +124,7 @@
            optionalFeatures: anchors, dom-overlay, light-estimation;
            overlayElement: #overlay;"
     shadow="type: pcf"
-    renderer="colorManagement: true; exposure: 1.0; antialias: true;"
+    renderer="colorManagement: true; antialias: true;"
     vr-mode-ui="enabled: false"
     loading-screen="enabled: false"
   >
@@ -203,26 +203,23 @@
 
     const enterErr = document.getElementById('enter-err');
     let arSupported = false;
-    let sceneReady = sceneEl.hasLoaded;   // true once the 5.4 MB model + scene finish loading
-
-    sceneEl.addEventListener('loaded', () => { sceneReady = true; refreshButton(); });
-
-    function refreshButton() {
-      if (!arSupported) { enterBtn.textContent = 'Open steady preview'; enterBtn.disabled = false; return; }
-      if (!sceneReady)  { enterBtn.textContent = 'Preparing…';          enterBtn.disabled = true;  return; }
-      enterBtn.textContent = 'View on your table';                       enterBtn.disabled = false;
-    }
 
     // ── Feature detection: configure the landing button ──
+    // Do NOT gate the button on a-scene 'loaded': the ar-hit-test entity only
+    // finishes loading *inside* an AR session, so the scene never reports
+    // "loaded" on this landing screen (that caused a permanent "Preparing…").
     (async function detectAR() {
       try { arSupported = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')); }
       catch (_) { arSupported = false; }
-      if (!arSupported) {
+      if (arSupported) {
+        enterBtn.textContent = 'View on your table';
+      } else {
+        enterBtn.textContent = 'Open steady preview';
         document.querySelector('#enter p').textContent =
           "This device doesn't support on-table AR — we'll show the steady 3D preview instead.";
         enterAlt.style.display = 'none';
       }
-      refreshButton();
+      enterBtn.disabled = false;
     })();
 
     enterBtn.addEventListener('click', () => { arSupported ? startAR() : (location.href = FALLBACK); });
