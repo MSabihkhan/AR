@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Menuva — On Your Table (Case 4: WebXR world AR)</title>
+
+  <!--
+    CASE 4 — real markerless world AR via the WebXR Device API (W3C standard).
+    Scan a surface → tap to place the dish → it's ANCHORED (WebXR anchor =
+    drift mitigation) at true real-world size. Walk around it; drag to spin it.
+    If the device has no immersive-ar support, we fall back to case3.html.
+    A-Frame 1.8.0, pinned.
+  -->
+  <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
+
+  <script>
+    // Transparent shadow-catcher so the dish reads as grounded on the table.
+    // ShadowMaterial is invisible except where shadows land → no fake "disc".
+    AFRAME.registerComponent('shadow-catcher', {
+      init() {
+        const mesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.7, 0.7),
+          new THREE.ShadowMaterial({ opacity: 0.35 })
+        );
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.receiveShadow = true;
+        this.el.setObject3D('mesh', mesh);
+      }
+    });
+
+    // Apply castShadow to every mesh inside a loaded glTF model.
+    AFRAME.registerComponent('cast-shadows', {
+      init() {
+        this.el.addEventListener('model-loaded', (e) => {
+          e.detail.model.traverse((n) => { if (n.isMesh) n.castShadow = true; });
+        });
+      }
+    });
+  </script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; background: #000; overflow: hidden; }
+
+    /* A-Frame's default enter buttons — always hide; we drive AR ourselves. */
+    .a-enter-vr, .a-enter-ar, .a-enter-vr-button, .a-enter-ar-button { display: none !important; }
+
+    /* ── Landing screen ── */
+    #enter {
+      position: fixed; inset: 0; z-index: 30;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 0.9rem; text-align: center; padding: 2rem;
+      background: radial-gradient(120% 120% at 50% 25%, #1c1611 0%, #000 75%);
+      transition: opacity 0.4s ease;
+    }
+    #enter.gone { opacity: 0; pointer-events: none; }
+    #enter .logo { font-size: 1.4rem; font-weight: 800; color: #fff; }
+    #enter .logo span { color: #D4843A; }
+    #enter h1 { color: #fff; font-size: 1.55rem; font-weight: 800; margin-top: 0.4rem; }
+    #enter h1 span { color: #D4843A; }
+    #enter p { color: rgba(255,255,255,0.55); font-size: 0.85rem; max-width: 18rem; }
+    #enter button {
+      margin-top: 0.6rem; border: none; cursor: pointer;
+      background: #D4843A; color: #1a120a; font-weight: 800; font-size: 0.95rem;
+      padding: 0.85rem 1.7rem; border-radius: 100px; min-width: 12rem;
+    }
+    #enter button[disabled] { opacity: 0.5; }
+    #enter .alt {
+      margin-top: 0.2rem; background: none; color: rgba(255,255,255,0.6);
+      font-size: 0.8rem; text-decoration: underline; padding: 0.4rem; min-width: 0;
+    }
+
+    /* ── In-AR DOM overlay (shown over the camera by WebXR dom-overlay) ── */
+    #overlay {
+      position: fixed; inset: 0; z-index: 10;
+      display: none; flex-direction: column; justify-content: space-between;
+      padding: 1.1rem;
+      padding-top: calc(1.1rem + env(safe-area-inset-top));
+      padding-bottom: calc(1.1rem + env(safe-area-inset-bottom));
+    }
+    body.ar-active #overlay { display: flex; }
+
+    #ov-top { display: flex; align-items: center; justify-content: space-between; }
+    #ov-top .logo { font-size: 1.1rem; font-weight: 700; color: #fff; }
+    #ov-top .logo span { color: #D4843A; }
+    #ov-exit {
+      width: 2.2rem; height: 2.2rem; border-radius: 50%; border: none; cursor: pointer;
+      background: rgba(0,0,0,0.55); color: #fff; font-size: 1.1rem; line-height: 1;
+    }
+
+    /* Status pill (center) */
+    #ov-status {
+      align-self: center; text-align: center;
+      background: rgba(0,0,0,0.6); border: 1px solid rgba(212,132,58,0.35);
+      border-radius: 16px; padding: 0.7rem 1.1rem; color: #fff;
+      font-size: 0.85rem; font-weight: 600; max-width: 80%;
+      transition: opacity 0.3s ease;
+    }
+    #ov-status.hide { opacity: 0; }
+
+    /* Bottom action row (after placement) */
+    #ov-actions { display: flex; gap: 0.6rem; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
+    #ov-actions.show { opacity: 1; pointer-events: auto; }
+    #ov-actions button {
+      border: none; cursor: pointer; border-radius: 100px; font-weight: 700; font-size: 0.85rem;
+      padding: 0.7rem 1.3rem;
+    }
+    #ov-move { background: rgba(0,0,0,0.6); color: #fff; border: 1px solid rgba(255,255,255,0.18) !important; }
+    #ov-done { background: #D4843A; color: #1a120a; }
+  </style>
+</head>
+<body>
+
+  <!-- ── AR scene ──
+       requiredFeatures kept minimal (hit-test) so sessions don't fail to start.
+       anchors + dom-overlay + light-estimation requested optionally. -->
+  <a-scene
+    webxr="requiredFeatures: hit-test;
+           optionalFeatures: anchors, dom-overlay, light-estimation;
+           overlayElement: #overlay;"
+    shadow="type: pcf"
+    renderer="colorManagement: true; exposure: 1.0; antialias: true;"
+    vr-mode-ui="enabled: false"
+    loading-screen="enabled: false"
+  >
+    <a-assets>
+      <a-asset-item id="dish-glb" src="burger.glb"></a-asset-item>
+    </a-assets>
+
+    <!-- Hit-test entity: drives the reticle and places #placed on tap. -->
+    <a-entity id="hit" ar-hit-test="target: #placed; footprintDepth: 0.35;"></a-entity>
+
+    <!-- Placement group: the ANCHOR rides on #placed; the dish is a child so we
+         can spin it without fighting the anchor's pose. Hidden until placed. -->
+    <a-entity id="placed" visible="false">
+      <a-entity id="dish"
+                gltf-model="#dish-glb"
+                cast-shadows
+                scale="1 1 1"      ><!-- 1u = 1m; GLB is authored at real size (~0.31 m) --></a-entity>
+      <a-entity shadow-catcher></a-entity>
+    </a-entity>
+
+    <a-light type="ambient" intensity="0.85"></a-light>
+    <a-light type="directional" intensity="0.5" position="1 4 2"
+             light="castShadow: true; shadowMapWidth: 1024; shadowMapHeight: 1024;
+                    shadowCameraLeft: -1; shadowCameraRight: 1;
+                    shadowCameraTop: 1; shadowCameraBottom: -1;"></a-light>
+
+    <a-camera></a-camera>
+  </a-scene>
+
+  <!-- ── In-AR overlay ── -->
+  <div id="overlay">
+    <div id="ov-top">
+      <div class="logo">menu<span>va</span></div>
+      <button id="ov-exit" aria-label="Exit AR">✕</button>
+    </div>
+    <div id="ov-status">Move your phone slowly to scan the table…</div>
+    <div id="ov-actions">
+      <button id="ov-move">Move</button>
+      <button id="ov-done">Looks good</button>
+    </div>
+  </div>
+
+  <!-- ── Landing screen ── -->
+  <div id="enter">
+    <div class="logo">menu<span>va</span></div>
+    <h1>See it <span>on your table</span></h1>
+    <p>Place the real-size dish on your table, walk around it, and drag to spin it.</p>
+    <button id="enter-btn" disabled>Checking your device…</button>
+    <button class="alt" id="enter-alt">Use steady preview instead</button>
+  </div>
+
+  <script>
+    const sceneEl  = document.querySelector('a-scene');
+    const hitEl    = document.getElementById('hit');
+    const placedEl = document.getElementById('placed');
+    const dishEl   = document.getElementById('dish');
+
+    const enterScr = document.getElementById('enter');
+    const enterBtn = document.getElementById('enter-btn');
+    const enterAlt = document.getElementById('enter-alt');
+
+    const ovStatus = document.getElementById('ov-status');
+    const ovActions= document.getElementById('ov-actions');
+    const ovExit   = document.getElementById('ov-exit');
+    const ovMove   = document.getElementById('ov-move');
+    const ovDone   = document.getElementById('ov-done');
+
+    const FALLBACK = 'case3.html';
+    let placed = false;
+
+    function setStatus(text, hidden = false) {
+      ovStatus.textContent = text;
+      ovStatus.classList.toggle('hide', hidden);
+    }
+
+    // ── Feature detection: configure the landing button ──
+    (async function detectAR() {
+      let supported = false;
+      try { supported = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')); }
+      catch (_) { supported = false; }
+
+      if (supported) {
+        enterBtn.textContent = 'View on your table';
+        enterBtn.disabled = false;
+        enterBtn.addEventListener('click', startAR);
+      } else {
+        // No world AR on this device → steady Case 3 preview is the right experience.
+        enterBtn.textContent = 'Open steady preview';
+        enterBtn.disabled = false;
+        enterBtn.addEventListener('click', () => location.href = FALLBACK);
+        document.querySelector('#enter p').textContent =
+          "This device doesn't support on-table AR — we'll show the steady 3D preview instead.";
+        enterAlt.style.display = 'none';
+      }
+    })();
+
+    enterAlt.addEventListener('click', () => location.href = FALLBACK);
+
+    async function startAR() {
+      try {
+        await sceneEl.enterAR();
+      } catch (err) {
+        console.warn('enterAR failed, falling back:', err);
+        location.href = FALLBACK;
+      }
+    }
+
+    // ── AR session lifecycle ──
+    sceneEl.addEventListener('enter-vr', () => {
+      if (!sceneEl.is('ar-mode')) return;
+      document.body.classList.add('ar-active');
+      enterScr.classList.add('gone');
+      resetPlacement();
+    });
+    sceneEl.addEventListener('exit-vr', () => {
+      document.body.classList.remove('ar-active');
+      enterScr.classList.remove('gone');
+    });
+
+    // ── Hit-test → placement state machine ──
+    hitEl.addEventListener('ar-hit-test-start',    () => { if (!placed) setStatus('Move your phone slowly to scan the table…'); });
+    hitEl.addEventListener('ar-hit-test-achieved', () => { if (!placed) setStatus('Tap the spot to place your dish'); });
+    hitEl.addEventListener('ar-hit-test-select',   () => {
+      placed = true;
+      hitEl.setAttribute('ar-hit-test', 'enabled', false);  // lock: stop re-placing on every tap
+      setStatus('Drag to spin · walk around it', false);
+      setTimeout(() => setStatus('', true), 2600);
+      ovActions.classList.add('show');
+    });
+
+    function resetPlacement() {
+      placed = false;
+      placedEl.setAttribute('visible', false);
+      hitEl.setAttribute('ar-hit-test', 'enabled', true);
+      ovActions.classList.remove('show');
+      dishEl.object3D.rotation.set(0, 0, 0);
+      setStatus('Move your phone slowly to scan the table…', false);
+    }
+
+    ovMove.addEventListener('click', resetPlacement);
+    ovDone.addEventListener('click', () => { ovActions.classList.remove('show'); setStatus('', true); });
+    ovExit.addEventListener('click', () => sceneEl.exitVR());
+
+    // ── Drag to spin the placed dish (child rotation; anchor pose untouched) ──
+    let dragging = false, lastX = 0;
+    const overlay = document.getElementById('overlay');
+    overlay.addEventListener('pointerdown', (e) => {
+      if (!placed) return;
+      if (e.target.closest('button')) return;  // don't rotate when tapping controls
+      dragging = true; lastX = e.clientX;
+    });
+    overlay.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - lastX; lastX = e.clientX;
+      dishEl.object3D.rotation.y += dx * 0.01;
+    });
+    overlay.addEventListener('pointerup',   () => dragging = false);
+    overlay.addEventListener('pointercancel', () => dragging = false);
+  </script>
+
+</body>
+</html>
