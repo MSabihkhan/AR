@@ -70,6 +70,10 @@
       margin-top: 0.2rem; background: none; color: rgba(255,255,255,0.6);
       font-size: 0.8rem; text-decoration: underline; padding: 0.4rem; min-width: 0;
     }
+    #enter-err {
+      display: none; color: #ff9b9b; font-size: 0.78rem; max-width: 19rem;
+      margin-top: 0.4rem; line-height: 1.4;
+    }
 
     /* ── In-AR DOM overlay (shown over the camera by WebXR dom-overlay) ── */
     #overlay {
@@ -170,6 +174,7 @@
     <p>Place the real-size dish on your table, walk around it, and drag to spin it.</p>
     <button id="enter-btn" disabled>Checking your device…</button>
     <button class="alt" id="enter-alt">Use steady preview instead</button>
+    <p id="enter-err"></p>
   </div>
 
   <script>
@@ -196,41 +201,52 @@
       ovStatus.classList.toggle('hide', hidden);
     }
 
+    const enterErr = document.getElementById('enter-err');
+    let arSupported = false;
+    let sceneReady = sceneEl.hasLoaded;   // true once the 5.4 MB model + scene finish loading
+
+    sceneEl.addEventListener('loaded', () => { sceneReady = true; refreshButton(); });
+
+    function refreshButton() {
+      if (!arSupported) { enterBtn.textContent = 'Open steady preview'; enterBtn.disabled = false; return; }
+      if (!sceneReady)  { enterBtn.textContent = 'Preparing…';          enterBtn.disabled = true;  return; }
+      enterBtn.textContent = 'View on your table';                       enterBtn.disabled = false;
+    }
+
     // ── Feature detection: configure the landing button ──
     (async function detectAR() {
-      let supported = false;
-      try { supported = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')); }
-      catch (_) { supported = false; }
-
-      if (supported) {
-        enterBtn.textContent = 'View on your table';
-        enterBtn.disabled = false;
-        enterBtn.addEventListener('click', startAR);
-      } else {
-        // No world AR on this device → steady Case 3 preview is the right experience.
-        enterBtn.textContent = 'Open steady preview';
-        enterBtn.disabled = false;
-        enterBtn.addEventListener('click', () => location.href = FALLBACK);
+      try { arSupported = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')); }
+      catch (_) { arSupported = false; }
+      if (!arSupported) {
         document.querySelector('#enter p').textContent =
           "This device doesn't support on-table AR — we'll show the steady 3D preview instead.";
         enterAlt.style.display = 'none';
       }
+      refreshButton();
     })();
 
+    enterBtn.addEventListener('click', () => { arSupported ? startAR() : (location.href = FALLBACK); });
     enterAlt.addEventListener('click', () => location.href = FALLBACK);
 
     async function startAR() {
+      enterErr.style.display = 'none';
       try {
         await sceneEl.enterAR();
       } catch (err) {
-        console.warn('enterAR failed, falling back:', err);
-        location.href = FALLBACK;
+        // Surface the real reason instead of silently bailing, so we can diagnose.
+        const msg = (err && (err.name + ': ' + err.message)) || String(err);
+        console.warn('enterAR failed:', err);
+        enterErr.textContent = 'Couldn’t start AR — ' + msg;
+        enterErr.style.display = 'block';
+        enterAlt.style.display = 'block';
+        enterAlt.textContent = 'Use steady preview instead →';
       }
     }
 
     // ── AR session lifecycle ──
     sceneEl.addEventListener('enter-vr', () => {
-      if (!sceneEl.is('ar-mode')) return;
+      // This scene only ever enters AR, so no ar-mode gate (it can be falsey at
+      // event time and leave the landing screen covering the camera).
       document.body.classList.add('ar-active');
       enterScr.classList.add('gone');
       resetPlacement();
