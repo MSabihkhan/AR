@@ -74,6 +74,13 @@
       display: none; color: #ff9b9b; font-size: 0.78rem; max-width: 19rem;
       margin-top: 0.4rem; line-height: 1.4;
     }
+    /* Temporary on-screen diagnostic readout */
+    #diag {
+      position: fixed; bottom: 0.5rem; left: 0; right: 0; z-index: 31;
+      text-align: center; color: rgba(255,255,255,0.5);
+      font-family: ui-monospace, monospace; font-size: 0.62rem; line-height: 1.5;
+      padding: 0 0.5rem; word-break: break-word;
+    }
 
     /* ── In-AR DOM overlay (shown over the camera by WebXR dom-overlay) ── */
     #overlay {
@@ -120,8 +127,7 @@
        requiredFeatures kept minimal (hit-test) so sessions don't fail to start.
        anchors + dom-overlay + light-estimation requested optionally. -->
   <a-scene
-    webxr="requiredFeatures: hit-test;
-           optionalFeatures: anchors, dom-overlay, light-estimation;
+    webxr="optionalFeatures: hit-test, anchors, dom-overlay, light-estimation;
            overlayElement: #overlay;"
     shadow="type: pcf"
     renderer="colorManagement: true; antialias: true;"
@@ -177,6 +183,9 @@
     <p id="enter-err"></p>
   </div>
 
+  <!-- TEMP: on-screen AR diagnostic — remove once Case 4 is confirmed working -->
+  <div id="diag">checking…</div>
+
   <script>
     const sceneEl  = document.querySelector('a-scene');
     const hitEl    = document.getElementById('hit');
@@ -202,6 +211,7 @@
     }
 
     const enterErr = document.getElementById('enter-err');
+    const diag     = document.getElementById('diag');
     let arSupported = false;
 
     // ── Feature detection: configure the landing button ──
@@ -209,8 +219,10 @@
     // finishes loading *inside* an AR session, so the scene never reports
     // "loaded" on this landing screen (that caused a permanent "Preparing…").
     (async function detectAR() {
+      let threw = '';
       try { arSupported = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')); }
-      catch (_) { arSupported = false; }
+      catch (e) { arSupported = false; threw = ' · isSessionSupported threw:' + e.name; }
+
       if (arSupported) {
         enterBtn.textContent = 'View on your table';
       } else {
@@ -220,6 +232,9 @@
         enterAlt.style.display = 'none';
       }
       enterBtn.disabled = false;
+
+      const chrome = (navigator.userAgent.match(/Chrome\/[\d.]+/) || [''])[0];
+      diag.textContent = `xr:${!!navigator.xr} · immersive-ar:${arSupported} · secure:${window.isSecureContext} · ${chrome}${threw}`;
     })();
 
     enterBtn.addEventListener('click', () => { arSupported ? startAR() : (location.href = FALLBACK); });
@@ -227,8 +242,10 @@
 
     async function startAR() {
       enterErr.style.display = 'none';
+      diag.textContent = 'starting AR session…';
       try {
         await sceneEl.enterAR();
+        diag.textContent = 'AR session started ✓';
       } catch (err) {
         // Surface the real reason instead of silently bailing, so we can diagnose.
         const msg = (err && (err.name + ': ' + err.message)) || String(err);
@@ -237,6 +254,7 @@
         enterErr.style.display = 'block';
         enterAlt.style.display = 'block';
         enterAlt.textContent = 'Use steady preview instead →';
+        diag.textContent = 'enterAR error → ' + msg;
       }
     }
 
