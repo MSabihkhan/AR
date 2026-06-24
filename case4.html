@@ -119,6 +119,15 @@
     }
     #ov-move { background: rgba(0,0,0,0.6); color: #fff; border: 1px solid rgba(255,255,255,0.18) !important; }
     #ov-done { background: #D4843A; color: #1a120a; }
+
+    /* TEMP in-AR diagnostic */
+    #ov-debug {
+      align-self: center; margin-top: 0.4rem;
+      background: rgba(0,0,0,0.6); color: #9fe09f;
+      font-family: ui-monospace, monospace; font-size: 0.6rem;
+      padding: 0.3rem 0.6rem; border-radius: 8px; max-width: 92%;
+      text-align: center; word-break: break-word;
+    }
   </style>
 </head>
 <body>
@@ -167,6 +176,7 @@
       <button id="ov-exit" aria-label="Exit AR">✕</button>
     </div>
     <div id="ov-status">Move your phone slowly to scan the table…</div>
+    <div id="ov-debug">init…</div>
     <div id="ov-actions">
       <button id="ov-move">Move</button>
       <button id="ov-done">Looks good</button>
@@ -259,12 +269,27 @@
     }
 
     // ── AR session lifecycle ──
+    // ── In-AR diagnostics ──
+    let dStart = 0, dAch = 0, dSel = 0, dFeats = '?';
+    const ovDebug = document.getElementById('ov-debug');
+    function updateDebug() {
+      ovDebug.textContent = `feats[${dFeats}] · start:${dStart} ach:${dAch} sel:${dSel}`;
+    }
+
     sceneEl.addEventListener('enter-vr', () => {
       // This scene only ever enters AR, so no ar-mode gate (it can be falsey at
       // event time and leave the landing screen covering the camera).
       document.body.classList.add('ar-active');
       enterScr.classList.add('gone');
       resetPlacement();
+      // What features did the session actually grant, and did ar-hit-test attach?
+      setTimeout(() => {
+        const s = sceneEl.renderer && sceneEl.renderer.xr.getSession && sceneEl.renderer.xr.getSession();
+        dFeats = (s && s.enabledFeatures) ? s.enabledFeatures.join(',') : 'unknown';
+        const comp = (hitEl.components && hitEl.components['ar-hit-test']) ? 'on' : 'OFF';
+        dFeats += ' hitComp:' + comp;
+        updateDebug();
+      }, 1000);
     });
     sceneEl.addEventListener('exit-vr', () => {
       document.body.classList.remove('ar-active');
@@ -272,9 +297,10 @@
     });
 
     // ── Hit-test → placement state machine ──
-    hitEl.addEventListener('ar-hit-test-start',    () => { if (!placed) setStatus('Move your phone slowly to scan the table…'); });
-    hitEl.addEventListener('ar-hit-test-achieved', () => { if (!placed) setStatus('Tap the spot to place your dish'); });
+    hitEl.addEventListener('ar-hit-test-start',    () => { dStart++; updateDebug(); if (!placed) setStatus('Point at the table & move slowly — a ring will appear'); });
+    hitEl.addEventListener('ar-hit-test-achieved', () => { dAch++;   updateDebug(); if (!placed) setStatus('Tap the ring to place your dish'); });
     hitEl.addEventListener('ar-hit-test-select',   () => {
+      dSel++; updateDebug();
       placed = true;
       hitEl.setAttribute('ar-hit-test', 'enabled', false);  // lock: stop re-placing on every tap
       setStatus('Drag to spin · walk around it', false);
